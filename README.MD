@@ -1,6 +1,6 @@
 # GitLab 自动代码审查工具
 
-CLI 工具，用于获取当前 GitLab 用户作为 Reviewer 的打开 Merge Request，下载 diff 并通过本地 `codex` 进行审查。
+CLI 工具，用于获取当前 GitLab 用户作为 Reviewer 的打开 Merge Request，下载 diff 并通过本地agent 进行审查, 最后把审查意见发送到gitlab。
 
 ## 使用
 - 复制 `.env.example` 为 `.env` 并填写 GitLab 访问令牌与 Host。
@@ -46,4 +46,7 @@ options:
 
 ## 截图
 ![screenshot](doc/screenshot.png)
+
+## 其它
+本项目的代码由Gemini生成
 
