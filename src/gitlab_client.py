@@ -37,6 +37,26 @@ class GitLabClient:
             print(f"Response: {result.stdout}")
             raise
 
+    def _curl_text(self, method, path):
+        api_url = f"{self.url}/api/v4{path}"
+        cmd = [
+            "curl", "-s", "-X", method,
+            "-H", f"PRIVATE-TOKEN: {self.token}",
+            api_url
+        ]
+        
+        try:
+            # Use text=False to get bytes, preventing crash on binary data
+            result = subprocess.run(cmd, capture_output=True, text=False, check=True)
+            try:
+                return result.stdout.decode('utf-8')
+            except UnicodeDecodeError:
+                print(f"Warning: Failed to decode content from {path}. Treating as binary.")
+                return None
+        except subprocess.CalledProcessError as e:
+            print(f"Error calling GitLab API (Raw): {e}")
+            return None
+
     def get_current_user(self):
         user_data = self._curl("GET", "/user")
         # Return a simple object or dict that mimics what we need
@@ -63,11 +83,39 @@ class GitLabClient:
             return []
         return [self._wrap_mr(mr) for mr in mrs_data]
 
+    def get_raw_file(self, project_id, file_path, ref):
+        encoded_path = urllib.parse.quote(file_path, safe='')
+        path = f"/projects/{project_id}/repository/files/{encoded_path}/raw?ref={ref}"
+        return self._curl_text("GET", path)
+
     def get_mr_diff(self, mr):
         # mr is the object returned by _wrap_mr
         path = f"/projects/{mr.project_id}/merge_requests/{mr.iid}/changes"
         data = self._curl("GET", path)
-        return data.get('changes', [])
+        changes = data.get('changes', [])
+        
+        for change in changes:
+            # If new file and diff is empty, fetch raw content
+            # Ensure it's not marked as binary by GitLab
+            if change.get('new_file') and not change.get('diff') and not change.get('binary'):
+                source_project_id = getattr(mr, 'source_project_id', mr.project_id)
+                sha = getattr(mr, 'sha', None)
+                if not sha:
+                    # Try getting sha from diff_refs if available
+                    pass
+                
+                if source_project_id and sha:
+                    print(f"Fetching raw content for new file: {change['new_path']}")
+                    content = self.get_raw_file(source_project_id, change['new_path'], sha)
+                    if content:
+                        # Construct a pseudo-diff
+                        lines = content.splitlines()
+                        diff_lines = [f"+{line}" for line in lines]
+                        change['diff'] = "\n".join(diff_lines)
+                    else:
+                        print(f"Skipping binary or undecodable content for: {change['new_path']}")
+        
+        return changes
 
     def post_comment(self, mr, body):
         path = f"/projects/{mr.project_id}/merge_requests/{mr.iid}/notes"

@@ -2,12 +2,14 @@ import os
 import json
 from datetime import datetime
 from .gitlab_client import GitLabClient
-from .codex_runner import CodexRunner
+from .agent_runner import AgentRunner
 
 class Reviewer:
-    def __init__(self, gitlab_url, gitlab_token, codex_path="codex", log_dir="reviews"):
+    def __init__(self, gitlab_url, gitlab_token, agents_config, active_agents, log_dir="reviews"):
         self.gitlab = GitLabClient(gitlab_url, gitlab_token)
-        self.codex = CodexRunner(codex_path)
+        self.runner = AgentRunner()
+        self.agents_config = agents_config
+        self.active_agents = active_agents
         self.log_dir = log_dir
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
@@ -53,7 +55,7 @@ class Reviewer:
 
     def run(self, project_id=None, mr_iid=None):
         if project_id and mr_iid:
-            print(f"Processing single MR {mr_iid} in project {project_id}...")
+            print(f"Processing single MR {mr.iid} in project {project_id}...")
             mr = self.gitlab.get_merge_request(project_id, mr_iid)
             # Force processing for manual single requests, but update history
             self._process_mr(mr)
@@ -73,13 +75,22 @@ class Reviewer:
             print("No merge requests found.")
             return
         
+        total = len(mrs)
+        processed_count = 0
+        skipped_count = 0
+        print(f"Found {total} open merge requests.")
+        
         for mr in mrs:
             if self._is_processed(mr):
-                # print(f"Skipping MR {mr.iid} (Project {mr.project_id}): No changes since last review.")
+                skipped_count += 1
+                print(f"Skipping MR {mr.iid} (Project {mr.project_id}): No new changes since last review.")
                 continue
 
             print(f"Processing MR {mr.iid} (Project {mr.project_id}): {mr.title}...")
             self._process_mr(mr)
+            processed_count += 1
+        
+        print(f"Batch complete. Processed: {processed_count}, Skipped: {skipped_count}, Total: {total}.")
 
     def _process_mr(self, mr):
         print("Fetching diffs...")
@@ -115,35 +126,50 @@ class Reviewer:
         except Exception as e:
             print(f"Failed to save review input: {e}")
 
-        # Log command to cmd.sh
+        combined_review_body = "## Automated Code Review\n\n"
+        
         cmd_sh_path = os.path.join(self.log_dir, "cmd.sh")
-        codex_cmd = f"{self.codex.codex_path} exec {abs_input_path} --skip-git-repo-check"
-        try:
-            with open(cmd_sh_path, 'a', encoding='utf-8') as f:
-                f.write(f"# {datetime.now()}\n")
-                f.write(f"{codex_cmd}\n\n")
-        except Exception as e:
-            print(f"Failed to write to cmd.sh: {e}")
+        
+        for agent_key in self.active_agents:
+            agent_conf = self.agents_config.get(agent_key)
+            if not agent_conf:
+                print(f"Warning: Configuration for agent '{agent_key}' not found.")
+                continue
+                
+            agent_name = agent_conf.get('name', agent_key)
+            command_template = agent_conf.get('command')
+            
+            print(f"Running {agent_name} review...")
+            
+            # Log command
+            real_cmd = command_template.replace("{file_path}", abs_input_path)
+            try:
+                with open(cmd_sh_path, 'a', encoding='utf-8') as f:
+                    f.write(f"# {datetime.now()} - {agent_name}\n")
+                    f.write(f"{real_cmd}\n\n")
+            except Exception as e:
+                print(f"Failed to write to cmd.sh: {e}")
 
-        print("Running Codex review...")
-        review_result = self.codex.run_from_file(input_filepath)
-
-        # Save result log locally
-        result_filename = f"project_{mr.project_id}_mr_{mr.iid}_{timestamp}_result.md"
-        result_filepath = os.path.join(self.log_dir, result_filename)
-        try:
-            with open(result_filepath, 'w', encoding='utf-8') as f:
-                f.write(review_result)
-            print(f"Review result saved to: {result_filepath}")
-        except Exception as e:
-            print(f"Failed to save review result: {e}")
+            # Run Agent
+            review_result = self.runner.run_from_file(abs_input_path, command_template)
+            
+            # Save individual result
+            result_filename = f"project_{mr.project_id}_mr_{mr.iid}_{timestamp}_{agent_key}_result.md"
+            result_filepath = os.path.join(self.log_dir, result_filename)
+            try:
+                with open(result_filepath, 'w', encoding='utf-8') as f:
+                    f.write(review_result)
+            except Exception as e:
+                print(f"Failed to save review result: {e}")
+                
+            combined_review_body += f"### {agent_name} Review\n\n{review_result}\n\n---\n\n"
 
         print("Posting comment to GitLab...")
-        self.gitlab.post_comment(mr, f"## Automated Code Review (via Codex)\n\n{review_result}")
+        self.gitlab.post_comment(mr, combined_review_body)
         
         self._mark_as_processed(mr)
         print(f"Done processing MR {mr.iid}.")
 
     def _save_log(self, mr, content):
-        # Deprecated, logic moved to _process_mr
+        # Deprecated
         pass

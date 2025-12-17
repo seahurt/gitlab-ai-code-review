@@ -1,0 +1,22 @@
+{
+  "codex": {
+    "name": "Codex",
+    "enabled": true,
+    "command": "codex exec {file_path} --skip-git-repo-check"
+  },
+  "gemini": {
+    "name": "Gemini",
+    "enabled": false,
+    "command": "gemini < {file_path}"
+  },
+  "claude": {
+    "name": "Claude",
+    "enabled": false,
+    "command": "claude review {file_path}"
+  },
+  "cursor": {
+    "name": "Cursor Agent",
+    "enabled": false,
+    "command": "cursor-agent run {file_path}"
+  }
+}

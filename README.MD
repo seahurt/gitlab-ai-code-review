@@ -7,7 +7,3 @@ CLI 工具，用于获取当前 GitLab 用户作为 Reviewer 的打开 Merge Req
 - 创建并激活虚拟环境，安装依赖：`pip install -r requirements.txt`。
 - 运行命令：`python main.py`，可选参数 `--project-id`、`--mr-iid`。
 
-## TODOS
-- [ ] 增加授权
-- [ ] 增加SSH支持
-- [ ] 增加版本号和更新日志
